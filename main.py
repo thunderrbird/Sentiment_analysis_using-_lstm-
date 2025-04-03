@@ -1,7 +1,6 @@
-import os
+import streamlit as st
 import pickle
 import numpy as np
-from flask import Flask, render_template, request
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 import re
@@ -9,81 +8,63 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 
-# Download NLTK stopwords if not already available
+# Download NLTK stopwords
 nltk.download("stopwords")
 
-# Initialize Flask app
-app = Flask(__name__)
-
 # Load the trained model and tokenizer
-try:
-    model = load_model("lstm_model.h5")
-    print("Model loaded successfully!")
-except Exception as e:
-    print(f"Error loading model: {e}")
-    model = None  # Set to None if loading fails
+@st.cache_resource
+def load_resources():
+    try:
+        model = load_model("lstm_model.h5")
+        with open("tokenizer.pkl", "rb") as f:
+            tokenizer = pickle.load(f)
+        return model, tokenizer
+    except Exception as e:
+        st.error(f"Error loading model/tokenizer: {e}")
+        return None, None
 
-try:
-    with open("tokenizer.pkl", "rb") as f:
-        tokenizer = pickle.load(f)
-    print("Tokenizer loaded successfully!")
-except Exception as e:
-    print(f"Error loading tokenizer: {e}")
-    tokenizer = None  # Set to None if loading fails
+model, tokenizer = load_resources()
 
 # Text preprocessing function
 def clean_text(text):
     """Cleans text by lowercasing, removing stopwords, and applying stemming."""
     ps = PorterStemmer()
     stop_words = set(stopwords.words("english"))
-
+    
     text = text.lower()
     text = re.sub(r"[^a-z\s]", "", text)  # Remove non-alphabetic characters
     words = text.split()
     words = [ps.stem(word) for word in words if word not in stop_words]
-
+    
     cleaned_text = " ".join(words)
-    if not cleaned_text:
-        print("Error: Cleaned text is empty!")
-    return cleaned_text
+    return cleaned_text if cleaned_text else None
 
 # Prediction function
 def predict_sentiment(text):
     """Predicts sentiment for a given text."""
     if model is None or tokenizer is None:
-        print("Error: Model or tokenizer is not loaded!")
-        return "Error", 0.0  # Return default values if model or tokenizer is missing
+        return "Error", 0.0  # Model or tokenizer not loaded
 
     text = clean_text(text)
     if not text:
-        print("Error: Input text is empty after preprocessing!")
-        return "Error", 0.0  # Handle empty text input
+        return "Error", 0.0  # Empty input after preprocessing
 
     sequence = tokenizer.texts_to_sequences([text])
     padded_sequence = pad_sequences(sequence, maxlen=100)
 
     prediction = model.predict(padded_sequence)[0][0]
     sentiment = "Positive" if prediction > 0.5 else "Negative"
-
-    print(f"Debug - Prediction Output: Sentiment={sentiment}, Confidence={prediction}")
     return sentiment, float(prediction)
 
-# Home and prediction route
-@app.route("/", methods=["GET", "POST"])
-def home():
-    result = None
-    confidence = None
+# Streamlit UI
+st.title("Sentiment Analysis using LSTM")
 
-    if request.method == "POST":
-        text = request.form.get("text")
-        if text:
-            result, confidence = predict_sentiment(text)
+user_input = st.text_area("Enter text to analyze sentiment:")
 
-    if confidence is None:
-        confidence = 0.0  # Default value to prevent error
-
-    return render_template("index.html", result=result, confidence=round(confidence, 2))
-
-# Run the Flask app
-if __name__ == "__main__":
-    app.run(debug=True)
+if st.button("Analyze Sentiment"):
+    if user_input:
+        sentiment, confidence = predict_sentiment(user_input)
+        st.write(f"**Sentiment:** {sentiment}")
+        st.write(f"**Confidence Score:** {round(confidence, 2)}")
+    else:
+        st.warning("Please enter some text!")
